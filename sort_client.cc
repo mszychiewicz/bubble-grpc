@@ -21,14 +21,11 @@
 #include <string>
 
 #include <grpcpp/grpcpp.h>
-
-#ifdef BAZEL_BUILD
-#include "examples/protos/helloworld.grpc.pb.h"
-#else
-
 #include "bubble.grpc.pb.h"
 
-#endif
+#define NO_THREADS 4
+#define MAX_VALUE 1000
+#define SIZE 40000
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -37,9 +34,10 @@ using bubble_grpc::SortingService;
 using bubble_grpc::SortRequest;
 using bubble_grpc::SortResponse;
 
+
 class SortClient {
 public:
-    SortClient(std::shared_ptr<Channel> channel)
+    SortClient(std::shared_ptr <Channel> channel)
             : stub_(SortingService::NewStub(channel)) {}
 
     // Assembles the client's payload, sends it and presents the response back
@@ -78,8 +76,52 @@ public:
     }
 
 private:
-    std::unique_ptr<SortingService::Stub> stub_;
+    std::unique_ptr <SortingService::Stub> stub_;
 };
+
+
+void generate(int arr[], int length) {
+    srand(256); //
+    for (int i = 0; i < length; i++) {
+        arr[i] = rand() % 1000;
+    }
+}
+
+int findMin(int *split[], int iterators[], int numberOfThreads, int splitLength) {
+    int min = MAX_VALUE + 1; // all rand numbers are non-negative
+    int index = -1;
+    for (int i = 0; i < numberOfThreads; i++) {
+        if (split[i][iterators[i]] < min && iterators[i] < splitLength) {
+            index = i;
+            min = split[i][iterators[i]];
+        }
+    }
+    return index;
+}
+
+
+void merge(int arr[], int **split, int length, int numberOfThreads) {
+    int splitLength = ceil(length / numberOfThreads);
+    int iterators[numberOfThreads];
+    for (int i = 0; i < numberOfThreads; i++) // initializing iterators
+        iterators[i] = 0;
+    int i = 0;
+    while (i < length) {
+        int index = findMin(split, iterators, numberOfThreads, splitLength);
+        arr[i] = split[index][iterators[index]];
+        iterators[index]++;
+        i++;
+    }
+}
+
+void split(int arr[], int **split, int length, int numberOfThreads) {
+    int splitLength = ceil(length / numberOfThreads);
+    for (int i = 0; i < numberOfThreads; i++) {
+        for (int j = 0; j < splitLength; j++) {
+            split[i][j] = arr[j + i * splitLength];
+        }
+    }
+}
 
 int main(int argc, char **argv) {
     // Instantiate the client. It requires a channel, out of which the actual RPCs
@@ -110,10 +152,38 @@ int main(int argc, char **argv) {
     }
     SortClient sortingService(
             grpc::CreateChannel(target_str, grpc::InsecureChannelCredentials()));
-    int arr[] = {2,3,1};
-    sortingService.Sort(arr, 3);
-    for (int i = 0; i < 3; ++i) {
-        std::cout << arr[i];
+
+    //generate data
+    int length = SIZE;
+    int numberOfThreads = NO_THREADS;
+    int array[length];
+    generate(array, length);
+
+    //start timer
+    auto start = std::chrono::high_resolution_clock::now();
+
+    //split
+    int splitLength = ceil(length / numberOfThreads);
+    int **splitArray = (int **) malloc(numberOfThreads * sizeof(int *));
+    for (int i = 0; i < numberOfThreads; i++)
+        splitArray[i] = (int *) malloc(splitLength * sizeof(int));
+    split(array, splitArray, length, numberOfThreads);
+
+    //sort
+    for (int i = 0; i < numberOfThreads; i++) {
+        sortingService.Sort(splitArray[i], splitLength);
     }
+
+    //merge
+    merge(array, splitArray, length, numberOfThreads);
+
+    //end timer
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "Bubble sort: " << (end - start) / std::chrono::milliseconds(1) << "ms" << std::endl;
+
+//    for (int i = 0; i < length; ++i) {
+//        std::cout << array[i] <<std::endl;
+//    }
+
     return 0;
 }
